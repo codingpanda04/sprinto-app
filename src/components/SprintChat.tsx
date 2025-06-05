@@ -1,7 +1,8 @@
 import React, { useEffect } from 'react';
-import { auth, db } from '../lib/firebase';
+import { auth, db, requestNotificationPermission, onMessageListener } from '../lib/firebase';
 import { collection, addDoc, query, orderBy, onSnapshot, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { useSprintSession } from '../hooks/useSprintSession';
+import toast from 'react-hot-toast';
 import type { Message } from '../types';
 import MessageList from './MessageList';
 import MessageInput from './MessageInput';
@@ -13,16 +14,36 @@ export default function SprintChat() {
   const activeSession = useSprintSession();
 
   useEffect(() => {
+    // Request notification permission when component mounts
+    requestNotificationPermission();
+
+    // Listen for foreground messages
+    const unsubscribeMessage = onMessageListener();
+
     const q = query(collection(db, 'messages'), orderBy('timestamp', 'asc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const newMessages = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as Message[];
+      
+      // Show notification for new messages
+      const lastMessage = newMessages[newMessages.length - 1];
+      if (lastMessage && lastMessage.userId !== auth.currentUser?.uid) {
+        if (lastMessage.type === 'message') {
+          toast(`${lastMessage.userEmail.split('@')[0]}: ${lastMessage.text}`, {
+            icon: '💬'
+          });
+        }
+      }
+      
       setMessages(newMessages);
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      unsubscribeMessage();
+    };
   }, []);
 
   const handleSprintComplete = async () => {
@@ -36,13 +57,17 @@ export default function SprintChat() {
       const winner = sortedParticipants[0];
       const winnerEmail = messages.find(m => m.userId === winner)?.userEmail;
       
+      const completionMessage = `Sprint completed! 🎉 Congratulations @${winnerEmail} for winning with ${formatWordCount(activeSession.wordCounts[winner])} words!`;
+      
       await addDoc(collection(db, 'messages'), {
-        text: `Sprint completed! 🎉 Congratulations @${winnerEmail} for winning with ${formatWordCount(activeSession.wordCounts[winner])} words!`,
+        text: completionMessage,
         userId: 'system',
         userEmail: 'System',
         timestamp: serverTimestamp(),
         type: 'sprint'
       });
+
+      toast.success(completionMessage);
     }
 
     await updateDoc(doc(db, 'sessions', activeSession.id), {
@@ -57,7 +82,7 @@ export default function SprintChat() {
     switch (command) {
       case '/sprint':
         if (activeSession) {
-          alert('A sprint session is already active!');
+          toast.error('A sprint session is already active!');
           return;
         }
         const duration = parseInt(args[0]) || 30;
@@ -69,57 +94,86 @@ export default function SprintChat() {
           wordCounts: {}
         };
         const sessionDoc = await addDoc(collection(db, 'sessions'), session);
+        const sprintMessage = `@${user.email} started a ${duration} minute sprint!`;
         await addDoc(collection(db, 'messages'), {
-          text: `@${user.email} started a ${duration} minute sprint!`,
+          text: sprintMessage,
           userId: user.uid,
           userEmail: user.email,
           timestamp: serverTimestamp(),
           type: 'sprint',
           duration
         });
+        
+        // Notify all users about new sprint
+        toast((t) => (
+          <div>
+            <p>New sprint session started!</p>
+            <div className="mt-2">
+              <button
+                className="mr-2 px-3 py-1 bg-green-500 text-white rounded-md"
+                onClick={() => {
+                  handleCommand('/join', []);
+                  toast.dismiss(t.id);
+                }}
+              >
+                Join
+              </button>
+              <button
+                className="px-3 py-1 bg-gray-500 text-white rounded-md"
+                onClick={() => toast.dismiss(t.id)}
+              >
+                Skip
+              </button>
+            </div>
+          </div>
+        ), { duration: 10000 });
         break;
 
       case '/join':
         if (!activeSession) {
-          alert('No active sprint session!');
+          toast.error('No active sprint session!');
           return;
         }
         if (!activeSession.participants.includes(user.uid)) {
           await updateDoc(doc(db, 'sessions', activeSession.id), {
             participants: [...activeSession.participants, user.uid]
           });
+          const joinMessage = `@${user.email} joined the sprint!`;
           await addDoc(collection(db, 'messages'), {
-            text: `@${user.email} joined the sprint!`,
+            text: joinMessage,
             userId: user.uid,
             userEmail: user.email,
             timestamp: serverTimestamp(),
             type: 'join'
           });
+          toast.success(joinMessage);
         }
         break;
 
       case '/leave':
         if (!activeSession) {
-          alert('No active sprint session!');
+          toast.error('No active sprint session!');
           return;
         }
         if (activeSession.participants.includes(user.uid)) {
           await updateDoc(doc(db, 'sessions', activeSession.id), {
             participants: activeSession.participants.filter(id => id !== user.uid)
           });
+          const leaveMessage = `@${user.email} left the sprint.`;
           await addDoc(collection(db, 'messages'), {
-            text: `@${user.email} left the sprint.`,
+            text: leaveMessage,
             userId: user.uid,
             userEmail: user.email,
             timestamp: serverTimestamp(),
             type: 'leave'
           });
+          toast.success(leaveMessage);
         }
         break;
 
       case '/wordcount':
         if (!activeSession) {
-          alert('No active sprint session!');
+          toast.error('No active sprint session!');
           return;
         }
         const wordCount = parseInt(args[0]) || 0;
@@ -130,14 +184,16 @@ export default function SprintChat() {
         await updateDoc(doc(db, 'sessions', activeSession.id), {
           wordCounts: updatedCounts
         });
+        const wordCountMessage = `@${user.email} wrote ${formatWordCount(wordCount)} words!`;
         await addDoc(collection(db, 'messages'), {
-          text: `@${user.email} wrote ${formatWordCount(wordCount)} words!`,
+          text: wordCountMessage,
           userId: user.uid,
           userEmail: user.email,
           timestamp: serverTimestamp(),
           type: 'wordcount',
           wordCount
         });
+        toast.success(wordCountMessage);
         break;
     }
   };
