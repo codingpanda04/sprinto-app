@@ -35,9 +35,9 @@ export default function SprintTimer({ session, onComplete }: SprintTimerProps) {
   if (!timeRemaining) return null;
 
   return (
-    <div className="fixed top-4 right-4 bg-white rounded-lg shadow-md p-3 flex items-center gap-2">
-      <Timer className="text-indigo-600" />
-      <span className="font-mono text-lg">{formatTimeRemaining(timeRemaining)}</span>
+    <div className="fixed top-4 right-4 bg-white dark:bg-gray-800 rounded-lg shadow-md p-3 flex items-center gap-2">
+      <Timer className="text-indigo-600 dark:text-indigo-400" />
+      <span className="font-mono text-lg text-gray-900 dark:text-gray-100">{formatTimeRemaining(timeRemaining)}</span>
     </div>
   );
 }
